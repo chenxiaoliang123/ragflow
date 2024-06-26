@@ -13,19 +13,25 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import os
-import requests
 import json
+import os
 
-class RAGFLow:
-    def __init__(self, user_key, base_url, version = 'v1'):
+import requests
+
+from api.settings import RetCode
+
+
+class RAGFlow:
+    def __init__(self, user_key, base_url, version='v1'):
         '''
         api_url: http://<host_address>/api/v1
         dataset_url: http://<host_address>/api/v1/dataset
+        document_url: http://<host_address>/api/v1/documents
         '''
         self.user_key = user_key
         self.api_url = f"{base_url}/api/{version}"
         self.dataset_url = f"{self.api_url}/dataset"
+        self.document_url = f"{self.api_url}/documents"
         self.authorization_header = {"Authorization": "{}".format(self.user_key)}
 
     def create_dataset(self, dataset_name):
@@ -36,29 +42,90 @@ class RAGFLow:
         result_dict = json.loads(res.text)
         return result_dict
 
-    def delete_dataset(self, dataset_name = None, dataset_id = None):
-        return dataset_name
+    def delete_dataset(self, dataset_name):
+        dataset_id = self.find_dataset_id_by_name(dataset_name)
 
-    def list_dataset(self):
-        response = requests.get(self.dataset_url)
-        print(response)
-        if response.status_code == 200:
-            return response.json()['datasets']
-        else:
-            return None
-
-    def get_dataset(self, dataset_id):
         endpoint = f"{self.dataset_url}/{dataset_id}"
-        response = requests.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return None
+        res = requests.delete(endpoint, headers=self.authorization_header)
+        return res.json()
 
-    def update_dataset(self, dataset_id, params):
+    def find_dataset_id_by_name(self, dataset_name):
+        res = requests.get(self.dataset_url, headers=self.authorization_header)
+        for dataset in res.json()['data']:
+            if dataset['name'] == dataset_name:
+                return dataset['id']
+        return None
+
+    def list_dataset(self, offset=0, count=-1, orderby="create_time", desc=True):
+        params = {
+            "offset": offset,
+            "count": count,
+            "orderby": orderby,
+            "desc": desc
+        }
+        response = requests.get(url=self.dataset_url, params=params, headers=self.authorization_header)
+        return response.json()
+
+    def get_dataset(self, dataset_name):
+        dataset_id = self.find_dataset_id_by_name(dataset_name)
         endpoint = f"{self.dataset_url}/{dataset_id}"
-        response = requests.put(endpoint, json=params)
-        if response.status_code == 200:
-            return True
-        else:
-            return False
+        response = requests.get(endpoint, headers=self.authorization_header)
+        return response.json()
+
+    def update_dataset(self, dataset_name, **params):
+        dataset_id = self.find_dataset_id_by_name(dataset_name)
+
+        endpoint = f"{self.dataset_url}/{dataset_id}"
+        response = requests.put(endpoint, json=params, headers=self.authorization_header)
+        return response.json()
+
+# -------------------- content management -----------------------------------------------------
+
+    # ----------------------------upload local files-----------------------------------------------------
+    def upload_local_file(self, dataset_id, file_paths):
+        files = []
+
+        for file_path in file_paths:
+            if not isinstance(file_path, str):
+                return {'code': RetCode.ARGUMENT_ERROR, 'message': f"{file_path} is not string."}
+            if 'http' in file_path:
+                return {'code': RetCode.ARGUMENT_ERROR, 'message': "Remote files have not unsupported."}
+            if os.path.isfile(file_path):
+                files.append(('file', open(file_path, 'rb')))
+            else:
+                return {'code': RetCode.DATA_ERROR, 'message': f"The file {file_path} does not exist"}
+
+        res = requests.request('POST', url=f"{self.document_url}/{dataset_id}", files=files,
+                               headers=self.authorization_header)
+
+        result_dict = json.loads(res.text)
+        return result_dict
+
+    # ----------------------------upload remote files-----------------------------------------------------
+    # ----------------------------download a file-----------------------------------------------------
+
+    # ----------------------------delete a file-----------------------------------------------------
+
+    # ----------------------------enable rename-----------------------------------------------------
+
+    # ----------------------------list files-----------------------------------------------------
+
+    # ----------------------------start parsing-----------------------------------------------------
+
+    # ----------------------------stop parsing-----------------------------------------------------
+
+    # ----------------------------show the status of the file-----------------------------------------------------
+
+    # ----------------------------list the chunks of the file-----------------------------------------------------
+
+    # ----------------------------delete the chunk-----------------------------------------------------
+
+    # ----------------------------edit the status of the chunk-----------------------------------------------------
+
+    # ----------------------------insert a new chunk-----------------------------------------------------
+
+    # ----------------------------upload a file-----------------------------------------------------
+
+    # ----------------------------get a specific chunk-----------------------------------------------------
+
+    # ----------------------------retrieval test-----------------------------------------------------
