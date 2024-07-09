@@ -1,5 +1,6 @@
+import { useTranslate } from '@/hooks/commonHooks';
 import { IModalProps } from '@/interfaces/common';
-import { Drawer, Form } from 'antd';
+import { Drawer, Flex, Form, Input } from 'antd';
 import { useEffect } from 'react';
 import { Node } from 'reactflow';
 import AnswerForm from '../answer-form';
@@ -7,8 +8,14 @@ import BeginForm from '../begin-form';
 import CategorizeForm from '../categorize-form';
 import { Operator } from '../constant';
 import GenerateForm from '../generate-form';
-import { useHandleFormValuesChange } from '../hooks';
+import { useHandleFormValuesChange, useHandleNodeNameChange } from '../hooks';
+import MessageForm from '../message-form';
+import OperatorIcon from '../operator-icon';
+import RelevantForm from '../relevant-form';
 import RetrievalForm from '../retrieval-form';
+import RewriteQuestionForm from '../rewrite-question-form';
+
+import styles from './index.less';
 
 interface IProps {
   node?: Node;
@@ -20,7 +27,12 @@ const FormMap = {
   [Operator.Generate]: GenerateForm,
   [Operator.Answer]: AnswerForm,
   [Operator.Categorize]: CategorizeForm,
+  [Operator.Message]: MessageForm,
+  [Operator.Relevant]: RelevantForm,
+  [Operator.RewriteQuestion]: RewriteQuestionForm,
 };
+
+const EmptyContent = () => <div>empty</div>;
 
 const FlowDrawer = ({
   visible,
@@ -28,8 +40,11 @@ const FlowDrawer = ({
   node,
 }: IModalProps<any> & IProps) => {
   const operatorName: Operator = node?.data.label;
-  const OperatorForm = FormMap[operatorName];
+  const OperatorForm = FormMap[operatorName] ?? EmptyContent;
   const [form] = Form.useForm();
+  const { name, handleNameBlur, handleNameChange } =
+    useHandleNodeNameChange(node);
+  const { t } = useTranslate('flow');
 
   const { handleValuesChange } = useHandleFormValuesChange(node?.id);
 
@@ -41,7 +56,21 @@ const FlowDrawer = ({
 
   return (
     <Drawer
-      title={node?.data.label}
+      title={
+        <Flex gap={'middle'} align="center">
+          <OperatorIcon name={operatorName}></OperatorIcon>
+          <Flex align="center" gap={'small'} flex={1}>
+            <label htmlFor="" className={styles.title}>
+              {t('title')}
+            </label>
+            <Input
+              value={name}
+              onBlur={handleNameBlur}
+              onChange={handleNameChange}
+            ></Input>
+          </Flex>
+        </Flex>
+      }
       placement="right"
       onClose={hideModal}
       open={visible}

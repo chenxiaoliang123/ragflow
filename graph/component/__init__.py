@@ -8,6 +8,9 @@ from .switch import Switch, SwitchParam
 from .relevant import Relevant, RelevantParam
 from .message import Message, MessageParam
 from .rewrite import RewriteQuestion, RewriteQuestionParam
+from .keyword import KeywordExtract, KeywordExtractParam
+from .baidu import Baidu, BaiduParam
+from .duckduckgosearch import DuckDuckGoSearch, DuckDuckGoSearchParam
 
 
 def component_class(class_name):

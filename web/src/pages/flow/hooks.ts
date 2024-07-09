@@ -1,33 +1,44 @@
 import { useSetModalState } from '@/hooks/commonHooks';
-import {
-  useFetchFlow,
-  useFetchFlowTemplates,
-  useSetFlow,
-} from '@/hooks/flow-hooks';
+import { useFetchFlow, useResetFlow, useSetFlow } from '@/hooks/flow-hooks';
 import { useFetchLlmList } from '@/hooks/llmHooks';
 import { IGraph } from '@/interfaces/database/flow';
 import { useIsFetching } from '@tanstack/react-query';
 import React, {
+  ChangeEvent,
   KeyboardEventHandler,
   useCallback,
   useEffect,
   useState,
 } from 'react';
-import { Node, Position, ReactFlowInstance } from 'reactflow';
+import { Connection, Node, Position, ReactFlowInstance } from 'reactflow';
 // import { shallow } from 'zustand/shallow';
 import { variableEnabledFieldMap } from '@/constants/chat';
 import {
   ModelVariableType,
   settledModelVariableMap,
 } from '@/constants/knowledge';
+import { useFetchModelId, useSendMessageWithSse } from '@/hooks/logicHooks';
 import { Variable } from '@/interfaces/database/chat';
+import api from '@/utils/api';
 import { useDebounceEffect } from 'ahooks';
-import { FormInstance } from 'antd';
+import { FormInstance, message } from 'antd';
 import { humanId } from 'human-id';
+import trim from 'lodash/trim';
 import { useParams } from 'umi';
-import { Operator } from './constant';
+import {
+  NodeMap,
+  Operator,
+  RestrictedUpstreamMap,
+  initialBeginValues,
+  initialCategorizeValues,
+  initialGenerateValues,
+  initialMessageValues,
+  initialRelevantValues,
+  initialRetrievalValues,
+  initialRewriteQuestionValues,
+} from './constant';
 import useGraphStore, { RFState } from './store';
-import { buildDslComponentsByGraph } from './utils';
+import { buildDslComponentsByGraph, receiveMessageError } from './utils';
 
 const selector = (state: RFState) => ({
   nodes: state.nodes,
@@ -43,6 +54,32 @@ export const useSelectCanvasData = () => {
   // return useStore(useShallow(selector)); // throw error
   // return useStore(selector, shallow);
   return useGraphStore(selector);
+};
+
+export const useInitializeOperatorParams = () => {
+  const llmId = useFetchModelId(true);
+
+  const initializeOperatorParams = useCallback(
+    (operatorName: Operator) => {
+      const initialFormValuesMap = {
+        [Operator.Begin]: initialBeginValues,
+        [Operator.Retrieval]: initialRetrievalValues,
+        [Operator.Generate]: { ...initialGenerateValues, llm_id: llmId },
+        [Operator.Answer]: {},
+        [Operator.Categorize]: { ...initialCategorizeValues, llm_id: llmId },
+        [Operator.Relevant]: { ...initialRelevantValues, llm_id: llmId },
+        [Operator.RewriteQuestion]: {
+          ...initialRewriteQuestionValues,
+          llm_id: llmId,
+        },
+        [Operator.Message]: initialMessageValues,
+      };
+      return initialFormValuesMap[operatorName];
+    },
+    [llmId],
+  );
+
+  return initializeOperatorParams;
 };
 
 export const useHandleDrag = () => {
@@ -61,6 +98,7 @@ export const useHandleDrop = () => {
   const addNode = useGraphStore((state) => state.addNode);
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance<any, any>>();
+  const initializeOperatorParams = useInitializeOperatorParams();
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -87,13 +125,15 @@ export const useHandleDrop = () => {
       });
       const newNode = {
         id: `${type}:${humanId()}`,
-        type: 'ragNode',
+        type: NodeMap[type as Operator] || 'ragNode',
         position: position || {
           x: 0,
           y: 0,
         },
         data: {
           label: `${type}`,
+          name: humanId(),
+          form: initializeOperatorParams(type as Operator),
         },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
@@ -101,14 +141,18 @@ export const useHandleDrop = () => {
 
       addNode(newNode);
     },
-    [reactFlowInstance, addNode],
+    [reactFlowInstance, addNode, initializeOperatorParams],
   );
 
   return { onDrop, onDragOver, setReactFlowInstance };
 };
 
 export const useShowDrawer = () => {
-  const [clickedNode, setClickedNode] = useState<Node>();
+  const {
+    clickedNodeId: clickNodeId,
+    setClickedNodeId,
+    getNode,
+  } = useGraphStore((state) => state);
   const {
     visible: drawerVisible,
     hideModal: hideDrawer,
@@ -117,19 +161,17 @@ export const useShowDrawer = () => {
 
   const handleShow = useCallback(
     (node: Node) => {
-      setClickedNode(node);
-      if (node.data.label !== Operator.Answer) {
-        showDrawer();
-      }
+      setClickedNodeId(node.id);
+      showDrawer();
     },
-    [showDrawer],
+    [showDrawer, setClickedNodeId],
   );
 
   return {
     drawerVisible,
     hideDrawer,
     showDrawer: handleShow,
-    clickedNode,
+    clickedNode: getNode(clickNodeId),
   };
 };
 
@@ -152,9 +194,9 @@ export const useSaveGraph = () => {
   const { setFlow } = useSetFlow();
   const { id } = useParams();
   const { nodes, edges } = useGraphStore((state) => state);
-  const saveGraph = useCallback(() => {
+  const saveGraph = useCallback(async () => {
     const dslComponents = buildDslComponentsByGraph(nodes, edges);
-    setFlow({
+    return setFlow({
       id,
       title: data.title,
       dsl: { ...data.dsl, graph: { nodes, edges }, components: dslComponents },
@@ -169,7 +211,7 @@ export const useWatchGraphChange = () => {
   const edges = useGraphStore((state) => state.edges);
   useDebounceEffect(
     () => {
-      console.info('useDebounceEffect');
+      // console.info('useDebounceEffect');
     },
     [nodes, edges],
     {
@@ -212,11 +254,10 @@ export const useFetchDataOnMount = () => {
 
   useEffect(() => {
     setGraphInfo(data?.dsl?.graph ?? ({} as IGraph));
-  }, [setGraphInfo, data?.dsl?.graph]);
+  }, [setGraphInfo, data]);
 
   useWatchGraphChange();
 
-  useFetchFlowTemplates();
   useFetchLlmList();
 
   return { loading, flowDetail: data };
@@ -244,6 +285,94 @@ export const useSetLlmSetting = (form?: FormInstance) => {
       return pre;
     }, {});
     const otherValues = settledModelVariableMap[ModelVariableType.Precise];
-    form?.setFieldsValue({ ...switchBoxValues, ...otherValues });
+    form?.setFieldsValue({
+      ...switchBoxValues,
+      ...otherValues,
+    });
   }, [form, initialLlmSetting]);
+};
+
+export const useValidateConnection = () => {
+  const { edges, getOperatorTypeFromId } = useGraphStore((state) => state);
+  // restricted lines cannot be connected successfully.
+  const isValidConnection = useCallback(
+    (connection: Connection) => {
+      // node cannot connect to itself
+      const isSelfConnected = connection.target === connection.source;
+
+      // limit the connection between two nodes to only one connection line in one direction
+      const hasLine = edges.some(
+        (x) => x.source === connection.source && x.target === connection.target,
+      );
+
+      const ret =
+        !isSelfConnected &&
+        !hasLine &&
+        RestrictedUpstreamMap[
+          getOperatorTypeFromId(connection.source) as Operator
+        ]?.every((x) => x !== getOperatorTypeFromId(connection.target));
+      return ret;
+    },
+    [edges, getOperatorTypeFromId],
+  );
+
+  return isValidConnection;
+};
+
+export const useHandleNodeNameChange = (node?: Node) => {
+  const [name, setName] = useState<string>('');
+  const { updateNodeName, nodes } = useGraphStore((state) => state);
+  const previousName = node?.data.name;
+  const id = node?.id;
+
+  const handleNameBlur = useCallback(() => {
+    const existsSameName = nodes.some((x) => x.data.name === name);
+    if (trim(name) === '' || existsSameName) {
+      if (existsSameName && previousName !== name) {
+        message.error('The name cannot be repeated');
+      }
+      setName(previousName);
+      return;
+    }
+
+    if (id) {
+      updateNodeName(id, name);
+    }
+  }, [name, id, updateNodeName, previousName, nodes]);
+
+  const handleNameChange = useCallback((e: ChangeEvent<any>) => {
+    setName(e.target.value);
+  }, []);
+
+  useEffect(() => {
+    setName(previousName);
+  }, [previousName]);
+
+  return { name, handleNameBlur, handleNameChange };
+};
+
+export const useSaveGraphBeforeOpeningDebugDrawer = (show: () => void) => {
+  const { id } = useParams();
+  const { saveGraph } = useSaveGraph();
+  const { resetFlow } = useResetFlow();
+  const { send } = useSendMessageWithSse(api.runCanvas);
+  const handleRun = useCallback(async () => {
+    const saveRet = await saveGraph();
+    if (saveRet?.retcode === 0) {
+      // Call the reset api before opening the run drawer each time
+      const resetRet = await resetFlow();
+      // After resetting, all previous messages will be cleared.
+      if (resetRet?.retcode === 0) {
+        // fetch prologue
+        const sendRet = await send({ id });
+        if (receiveMessageError(sendRet)) {
+          message.error(sendRet?.data?.retmsg);
+        } else {
+          show();
+        }
+      }
+    }
+  }, [saveGraph, resetFlow, id, send, show]);
+
+  return handleRun;
 };

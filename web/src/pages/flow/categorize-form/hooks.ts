@@ -1,24 +1,14 @@
 import get from 'lodash/get';
 import omit from 'lodash/omit';
 import { useCallback, useEffect } from 'react';
-import { Operator } from '../constant';
+import { Edge, Node } from 'reactflow';
 import {
   ICategorizeItem,
   ICategorizeItemResult,
   IOperatorForm,
+  NodeData,
 } from '../interface';
 import useGraphStore from '../store';
-
-// exclude some nodes downstream of the classification node
-const excludedNodes = [Operator.Categorize, Operator.Answer, Operator.Begin];
-
-export const useBuildCategorizeToOptions = () => {
-  const nodes = useGraphStore((state) => state.nodes);
-
-  return nodes
-    .filter((x) => excludedNodes.every((y) => y !== x.data.label))
-    .map((x) => ({ label: x.id, value: x.id }));
-};
 
 /**
    * convert the following object into a list
@@ -33,10 +23,18 @@ export const useBuildCategorizeToOptions = () => {
 */
 const buildCategorizeListFromObject = (
   categorizeItem: ICategorizeItemResult,
+  edges: Edge[],
+  node?: Node<NodeData>,
 ) => {
+  // Categorize's to field has two data sources, with edges as the data source.
+  // Changes in the edge or to field need to be synchronized to the form field.
   return Object.keys(categorizeItem).reduce<Array<ICategorizeItem>>(
     (pre, cur) => {
-      pre.push({ name: cur, ...categorizeItem[cur] });
+      // synchronize edge data to the to field
+      const edge = edges.find(
+        (x) => x.source === node?.id && x.sourceHandle === cur,
+      );
+      pre.push({ name: cur, ...categorizeItem[cur], to: edge?.target });
       return pre;
     },
     [],
@@ -68,10 +66,15 @@ const buildCategorizeObjectFromList = (list: Array<ICategorizeItem>) => {
 export const useHandleFormValuesChange = ({
   onValuesChange,
   form,
-  node,
+  nodeId,
 }: IOperatorForm) => {
+  const edges = useGraphStore((state) => state.edges);
+  const getNode = useGraphStore((state) => state.getNode);
+  const node = getNode(nodeId);
+
   const handleValuesChange = useCallback(
     (changedValues: any, values: any) => {
+      console.info(changedValues, values);
       onValuesChange?.(changedValues, {
         ...omit(values, 'items'),
         category_description: buildCategorizeObjectFromList(values.items),
@@ -81,12 +84,15 @@ export const useHandleFormValuesChange = ({
   );
 
   useEffect(() => {
+    const items = buildCategorizeListFromObject(
+      get(node, 'data.form.category_description', {}),
+      edges,
+      node,
+    );
     form?.setFieldsValue({
-      items: buildCategorizeListFromObject(
-        get(node, 'data.form.category_description', {}),
-      ),
+      items,
     });
-  }, [form, node]);
+  }, [form, node, edges]);
 
   return { handleValuesChange };
 };
